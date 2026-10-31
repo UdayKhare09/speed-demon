@@ -1,2 +1,6 @@
 .out/
 data/
+generators/
+speed-demon-context.md
+.pytest_cache/
+.claude/

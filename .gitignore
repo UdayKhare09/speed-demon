@@ -6,3 +6,4 @@ speed-demon-context.md
 .claude/
 target/
 __pycache__/
+.vscode/

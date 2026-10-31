@@ -1,13 +1,8 @@
-FROM halloumee/speed-demon-rust:1.99.1-trixie-llvm-tools@sha256:13e4ee7135d8eac6c56476c7d1aee201f36479f4745fd5d0e6b4529f4e13251a AS build
+FROM gcc:16@sha256:43978d7710a803d1c3d32f4117c1528ec7285a4ce2c0a51e982ec1a6e3d87d95 AS build
 WORKDIR /src
-COPY . .
-
-RUN python3 a_ingest.py --seed 1 --scale sample --out /tmp/train_data && \
-    RUSTFLAGS="-C profile-generate=/tmp/pgo-data -C target-cpu=native" cargo build --release --offline && \
-    /src/target/release/solution --data /tmp/train_data --out /tmp/train_out && \
-    llvm-profdata merge -o /tmp/pgo-data/merged.profdata /tmp/pgo-data && \
-    RUSTFLAGS="-C profile-use=/tmp/pgo-data/merged.profdata -C target-cpu=native" cargo build --release --offline
+COPY main.cpp .
+RUN g++ -O3 -mavx2 -msse4.2 -flto -march=x86-64-v3 -mtune=intel -funroll-loops -fno-rtti -fno-exceptions -static-libstdc++ -static-libgcc -pthread -s main.cpp -o solution
 
 FROM debian:13-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
-COPY --from=build /src/target/release/solution /app/solution
+COPY --from=build /src/solution /app/solution
 ENTRYPOINT ["/app/solution"]

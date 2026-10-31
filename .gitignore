@@ -4,3 +4,4 @@ generators/
 speed-demon-context.md
 .pytest_cache/
 .claude/
+target/

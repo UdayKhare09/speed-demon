@@ -9,16 +9,11 @@ Every step from the reference to our final version, each with the live-board run
 | 0 | Naive Python reference implementation | *(reference)* | 32.05 | 228.0 | 102 | 1.0 | 1.00 | 0.0 |
 | 1 | Zero-dependency Rust baseline: `libc_mmap`, 12-thread chunking, custom line scanner, thread-local hour bucketing | run-80177cc | 0.095 | 70.0 | 481 | 1.0 | 16.89 | 61.387 |
 | 2 | Packed 6-byte records, global canonical endpoint ordering, unaligned SIMD/64-bit FNV hashing, stream-direct file output | run-04a3cc4 | ~0.034 | ~28.0 | 352 | 1.0 | ~38.5 | ~79.3 |
-| 3 | Hardware SSE4.2 CRC32 hashing, branchless arithmetic hour index, $O(1)$ canonical index forwarding, `std::thread::scope`, per-thread lazy sparse hour vectors | *(pending board run)* | ~0.026 | ~25.0 | ~310 | 1.0 | ~48.2 | ~84.1 |
+| 3 | Hardware SSE4.2 CRC32 hashing, branchless arithmetic hour index, $O(1)$ canonical index forwarding, `std::thread::scope`, per-thread lazy sparse hour vectors | run-f1782ad9557e | 0.043938 | 38.8 | 532 | 1.0 | 27.20 | 71.725 |
 
-> **Board Receipt Note for Step 1:**
-> - Live board run ID for commit `80177cc` measured on the Falkenstein host:
->   - $T = 0.095$ s
->   - $M = 70.0$ MB
->   - $S = 481$ lines
->   - $D = 1$ dependency
->   - $K = 16.894148$
->   - Points: **61.387** (Rank 50 on live board)
+> **Board Receipt Notes:**
+> - **Step 1 (`run-80177cc`):** $T = 0.095$ s, $M = 70.0$ MB, $S = 481$, $D = 1$, $K = 16.894148$, **61.387 pts** (Rank 50).
+> - **Step 3 (`run-f1782ad9557e`):** $T = 0.043938$ s, $M = 38.8$ MB (40,693,760 B), $S = 532$, $D = 1$, $K = 27.19518$, **71.725 pts** (Rank 28, +22 places).
 
 ---
 
@@ -68,10 +63,11 @@ Every step from the reference to our final version, each with the live-board run
   3. **$O(1)$ Canonical Index Forwarding:** Eliminated all 21,600 binary searches and string comparisons in canonical mapping by tracking `orig_id` in the dedup table and directly inverting the sorted permutation table. Canonical mapping time dropped from 3.5 ms to 0.44 ms ($8\times$ faster).
   4. **Active Hour Locality & Zero-Cost Vectors:** Since worker chunks naturally contain requests within 5–12 contiguous hours, hour vectors are allocated lazily upon first access (`capacity == 0 -> reserve(32000)`). In Phase 2, `if recs.is_empty() { continue; }` instantly skips the 85% of threads that have no data for that hour.
   5. **`std::thread::scope`:** Replaced `Arc` and atomic reference counting with standard library scoped threads, allowing direct stack references and reducing code overhead.
-- **Local Benchmark Result:**
-  - Pure execution wall time: **~26 ms** (down from 34 ms in Step 2 and 95 ms in Step 1).
-  - Peak anonymous RAM: **~25 MB**.
-  - Output SHA-256: `495ca09682b9673ef836a506496177680bb4a3af54255174befddb1f83481cd3` (100% exact match).
+- **Board Result (Run ID `run-f1782ad9557e`):**
+  - $T = 0.043938$ s ($43.9$ ms, over $2.16\times$ faster than Step 1).
+  - $M = 38.8$ MB (40,693,760 bytes, $42\%$ memory reduction vs Step 1).
+  - $S = 532$ lines ($D = 1$).
+  - Score: **71.725 points** ($K = 27.19518$, climbed from **Rank 50 to Rank 28**).
 
 ---
 

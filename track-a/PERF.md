@@ -10,6 +10,7 @@ Every step from the reference to our final version, each with the live-board run
 | 1 | Zero-dependency Rust baseline: `libc_mmap`, 12-thread chunking, custom line scanner, thread-local hour bucketing | run-80177cc | 0.095 | 70.0 | 481 | 1.0 | 16.89 | 61.387 |
 | 2 | Packed 6-byte records, global canonical endpoint ordering, unaligned SIMD/64-bit FNV hashing, stream-direct file output | run-04a3cc4 | ~0.034 | ~28.0 | 352 | 1.0 | ~38.5 | ~79.3 |
 | 3 | Hardware SSE4.2 CRC32 hashing, branchless arithmetic hour index, $O(1)$ canonical index forwarding, `std::thread::scope`, per-thread lazy sparse hour vectors | run-f1782ad9557e | 0.043938 | 38.8 | 532 | 1.0 | 27.20 | 71.725 |
+| 4 | SWAR 4/5-digit latency parser, 256 KB thread stacks, sorting networks for $N \le 3$, compacted 936B HRS literal, and leaner buffer limits | *(pending board run)* | ~0.025 | ~22.0 | ~490 | 1.0 | ~45.0 | ~82.7 |
 
 > **Board Receipt Notes:**
 > - **Step 1 (`run-80177cc`):** $T = 0.095$ s, $M = 70.0$ MB, $S = 481$, $D = 1$, $K = 16.894148$, **61.387 pts** (Rank 50).
@@ -68,6 +69,21 @@ Every step from the reference to our final version, each with the live-board run
   - $M = 38.8$ MB (40,693,760 bytes, $42\%$ memory reduction vs Step 1).
   - $S = 532$ lines ($D = 1$).
   - Score: **71.725 points** ($K = 27.19518$, climbed from **Rank 50 to Rank 28**).
+
+### Step 4: SWAR Latency Parsing, Small-N Sorting Networks, and Stack/Scratch Memory Trimming
+- **Diagnostic from Step 3:**
+  - Peak memory was 38.8 MB (40.7 MB kernel cgroup), primarily driven by Linux default 8 MB thread stacks and scratch buffers sized for worst-case peaks.
+  - Phase 1 latency parsing was executing variable-length byte-by-byte loops for every line, even though 84% of latencies are exactly 4 or 5 digits.
+  - In Phase 2, `sort_unstable()` was invoked even for tiny slices ($N = 2, 3$), incurring quicksort recursion overhead across over 36,000 endpoint groups.
+- **Optimizations Applied:**
+  1. **SWAR 4/5-Digit Latency Parser:** A single unaligned 64-bit load examines byte 4 or byte 5 for `\n`. For 84% of lines, integer parsing completes via direct SIMD/SWAR arithmetic without any loop or branch mispredictions.
+  2. **Explicit 256 KB Thread Stacks:** Reduced thread stack allocations from Linux's default 8 MB down to 256 KB via `std::thread::Builder::new().stack_size(256 * 1024)`, cutting virtual/anonymous memory footprint.
+  3. **Small-N Sorting Networks:** Replaced general quicksort with branchless 2-element and 3-element sorting networks for $N=2$ and $N=3$, accelerating ~36,000 groups in Phase 2.
+  4. **HRS Literal & Code Compression:** Replaced 75 lines of array literals with a single contiguous 936-byte byte string literal. Streamlined line emission into a consolidated helper.
+  5. **Tighter Heap Capacities:** Reduced hour vector pre-reservations from 32,000 to 24,000 entries and output buffers from 600 KB to 550 KB, saving ~8 MB of heap overhead.
+- **Local Benchmark Result:**
+  - Pure execution wall time: **~25 ms**.
+  - Output SHA-256: `495ca09682b9673ef836a506496177680bb4a3af54255174befddb1f83481cd3` (100% exact match).
 
 ---
 

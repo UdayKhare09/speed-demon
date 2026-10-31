@@ -5,3 +5,4 @@ speed-demon-context.md
 .pytest_cache/
 .claude/
 target/
+__pycache__/

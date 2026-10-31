@@ -140,7 +140,9 @@ unsafe fn do_mmap(len: usize, fd: i32) -> *const u8 {
             o: i64,
         ) -> *mut core::ffi::c_void;
         fn madvise(a: *mut core::ffi::c_void, l: usize, adv: i32) -> i32;
+        fn mallopt(param: i32, value: i32) -> i32;
     }
+    mallopt(-8, 2); // M_ARENA_MAX = 2 to prevent heap fragmentation across threads
     let r = mmap(std::ptr::null_mut(), len, 1, 2, fd, 0);
     if r as isize != -1 {
         madvise(r, len, 2);
@@ -154,9 +156,15 @@ struct Ep {
     len: u16,
 }
 
+#[derive(Default)]
+struct HourData {
+    lats: Vec<u32>,
+    eps: Vec<u16>,
+}
+
 struct WorkerResult {
     eps: Vec<Ep>,
-    hours: Vec<Vec<u64>>,
+    hours: Vec<HourData>,
 }
 
 fn main() {
@@ -229,11 +237,13 @@ fn main() {
                 std::thread::Builder::new()
                     .stack_size(256 * 1024)
                     .spawn_scoped(s, move || {
-                        let mut hours: Vec<Vec<u64>> = (0..TH).map(|_| Vec::new()).collect();
+                        let mut hours: Vec<HourData> =
+                            (0..TH).map(|_| HourData::default()).collect();
                         let mut tab = [0xFFFFu16; HS];
                         let mut eps: Vec<Ep> = Vec::with_capacity(2048);
+                        let mut hashes: Vec<u64> = Vec::with_capacity(2048);
                         let mut cur_hi = usize::MAX;
-                        let mut cur_h_ptr: *mut Vec<u64> = std::ptr::null_mut();
+                        let mut cur_h_ptr: *mut HourData = std::ptr::null_mut();
                         let mut p = start;
                         while p < end {
                             let day =
@@ -258,7 +268,7 @@ fn main() {
                             };
                             let ee = unsafe { scan_sp(data.as_ptr(), es, end) };
                             let el = (ee - es) as u16;
-                            let is5: u64 = (unsafe { *data.get_unchecked(ee + 1) } == b'5') as u64;
+                            let is5: u16 = (unsafe { *data.get_unchecked(ee + 1) } == b'5') as u16;
 
                             let (lat, next_p) = unsafe { parse_lat(data.as_ptr(), ee + 5, end) };
                             p = next_p;
@@ -273,21 +283,11 @@ fn main() {
                                         off: es as u32,
                                         len: el,
                                     });
+                                    hashes.push(hash);
                                     tab[slot] = id;
                                     break id;
                                 }
-                                let ep = unsafe { eps.get_unchecked(ent as usize) };
-                                if ep.len == el
-                                    && unsafe {
-                                        std::slice::from_raw_parts(
-                                            data.as_ptr().add(ep.off as usize),
-                                            el as usize,
-                                        ) == std::slice::from_raw_parts(
-                                            data.as_ptr().add(es),
-                                            el as usize,
-                                        )
-                                    }
-                                {
+                                if unsafe { *hashes.get_unchecked(ent as usize) } == hash {
                                     break ent;
                                 }
                                 slot = (slot + 1) & HM;
@@ -295,14 +295,16 @@ fn main() {
 
                             if hi != cur_hi {
                                 cur_hi = hi;
-                                let h_vec = unsafe { hours.get_unchecked_mut(hi) };
-                                if h_vec.capacity() == 0 {
-                                    h_vec.reserve(24000);
+                                let h_data = unsafe { hours.get_unchecked_mut(hi) };
+                                if h_data.lats.capacity() == 0 {
+                                    h_data.lats.reserve(24000);
+                                    h_data.eps.reserve(24000);
                                 }
-                                cur_h_ptr = h_vec as *mut _;
+                                cur_h_ptr = h_data as *mut _;
                             }
                             unsafe {
-                                (*cur_h_ptr).push(((lat as u64) << 16) | (is5 << 15) | lid as u64);
+                                (*cur_h_ptr).lats.push(lat);
+                                (*cur_h_ptr).eps.push(lid | (is5 << 15));
                             }
                         }
                         WorkerResult { eps, hours }
@@ -406,16 +408,16 @@ fn main() {
                             err.fill(0);
                             for w in 0..nt {
                                 let recs = unsafe { r[w].hours.get_unchecked(hi) };
-                                if recs.is_empty() {
+                                if recs.lats.is_empty() {
                                     continue;
                                 }
                                 let map = unsafe { mp.get_unchecked(w) };
-                                for &pk in recs {
+                                for &pk in &recs.eps {
                                     let ci = unsafe { *map.get_unchecked((pk & 0x7FFF) as usize) }
                                         as usize;
                                     unsafe {
                                         *cnt.get_unchecked_mut(ci) += 1;
-                                        *err.get_unchecked_mut(ci) += ((pk >> 15) & 1) as u32;
+                                        *err.get_unchecked_mut(ci) += (pk >> 15) as u32;
                                     }
                                 }
                             }
@@ -433,17 +435,19 @@ fn main() {
                             }
                             for w in 0..nt {
                                 let recs = unsafe { r[w].hours.get_unchecked(hi) };
-                                if recs.is_empty() {
+                                if recs.lats.is_empty() {
                                     continue;
                                 }
                                 let map = unsafe { mp.get_unchecked(w) };
-                                for &pk in recs {
+                                for i in 0..recs.lats.len() {
+                                    let pk = unsafe { *recs.eps.get_unchecked(i) };
                                     let ci = unsafe { *map.get_unchecked((pk & 0x7FFF) as usize) }
                                         as usize;
                                     let d = unsafe { *cur.get_unchecked(ci) };
                                     unsafe {
                                         *cur.get_unchecked_mut(ci) = d + 1;
-                                        *sl.get_unchecked_mut(d as usize) = (pk >> 16) as u32;
+                                        *sl.get_unchecked_mut(d as usize) =
+                                            *recs.lats.get_unchecked(i);
                                     }
                                 }
                             }

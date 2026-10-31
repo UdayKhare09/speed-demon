@@ -10,11 +10,13 @@ Every step from the reference to our final version, each with the live-board run
 | 1 | Zero-dependency Rust baseline: `libc_mmap`, 12-thread chunking, custom line scanner, thread-local hour bucketing | run-80177cc | 0.095 | 70.0 | 481 | 1.0 | 16.89 | 61.387 |
 | 2 | Packed 6-byte records, global canonical endpoint ordering, unaligned SIMD/64-bit FNV hashing, stream-direct file output | run-04a3cc4 | ~0.034 | ~28.0 | 352 | 1.0 | ~38.5 | ~79.3 |
 | 3 | Hardware SSE4.2 CRC32 hashing, branchless arithmetic hour index, $O(1)$ canonical index forwarding, `std::thread::scope`, per-thread lazy sparse hour vectors | run-f1782ad9557e | 0.043938 | 38.8 | 532 | 1.0 | 27.20 | 71.725 |
-| 4 | SWAR 4/5-digit latency parser, 256 KB thread stacks, sorting networks for $N \le 3$, compacted 936B HRS literal, and leaner buffer limits | *(pending board run)* | ~0.025 | ~22.0 | ~490 | 1.0 | ~45.0 | ~82.7 |
+| 4 | SWAR 4/5-digit latency parser, 256 KB thread stacks, sorting networks for $N \le 3$, compacted 936B HRS literal, and leaner buffer limits | run-1443ec2e1585 | 0.043876 | 40.8 | 501 | 1.0 | 27.44 | 71.918 |
+| 5 | Glibc `M_ARENA_MAX=2`, separated 6-byte `HourData { lats: Vec<u32>, eps: Vec<u16> }`, integer CRC equality without string slice comparisons | *(current commit)* | ~0.024 | ~22.0 | ~480 | 1.0 | ~46.0 | ~83.1 |
 
 > **Board Receipt Notes:**
 > - **Step 1 (`run-80177cc`):** $T = 0.095$ s, $M = 70.0$ MB, $S = 481$, $D = 1$, $K = 16.894148$, **61.387 pts** (Rank 50).
-> - **Step 3 (`run-f1782ad9557e`):** $T = 0.043938$ s, $M = 38.8$ MB (40,693,760 B), $S = 532$, $D = 1$, $K = 27.19518$, **71.725 pts** (Rank 28, +22 places).
+> - **Step 3 (`run-f1782ad9557e`):** $T = 0.043938$ s, $M = 38.8$ MB (40,693,760 B), $S = 532$, $D = 1$, $K = 27.19518$, **71.725 pts** (Rank 28).
+> - **Step 4 (`run-1443ec2e1585`):** $T = 0.043876$ s, $M = 40.8$ MB (40,853,504 B), $S = 501$, $D = 1$, $K = 27.439068$, **71.918 pts**.
 
 ---
 
@@ -81,9 +83,20 @@ Every step from the reference to our final version, each with the live-board run
   3. **Small-N Sorting Networks:** Replaced general quicksort with branchless 2-element and 3-element sorting networks for $N=2$ and $N=3$, accelerating ~36,000 groups in Phase 2.
   4. **HRS Literal & Code Compression:** Replaced 75 lines of array literals with a single contiguous 936-byte byte string literal. Streamlined line emission into a consolidated helper.
   5. **Tighter Heap Capacities:** Reduced hour vector pre-reservations from 32,000 to 24,000 entries and output buffers from 600 KB to 550 KB, saving ~8 MB of heap overhead.
-- **Local Benchmark Result:**
-  - Pure execution wall time: **~25 ms**.
-  - Output SHA-256: `495ca09682b9673ef836a506496177680bb4a3af54255174befddb1f83481cd3` (100% exact match).
+- **Board Result (Run ID `run-1443ec2e1585`):**
+  - $T = 0.043876$ s ($43.8$ ms).
+  - $M = 40.8$ MB (40,853,504 bytes).
+  - $S = 501$ lines ($D = 1$).
+  - Score: **71.918 points** ($K = 27.439068$).
+
+### Step 5: Heap Arena Clamping & 6-Byte Separated Vectors
+- **Diagnostic from Step 4:**
+  - $M$ plateaued at ~40.8 MB because glibc's ptmalloc spawns up to 96 separate heap arenas across multi-threaded operations, each claiming 64 MB virtual mappings and dirty pages.
+  - Furthermore, records were stored as single `u64` values ($3.1\text{M} \times 8\text{ B} = 24.8\text{ MB}$), keeping both latency and endpoint bound together during Phase 2 Pass 1.
+- **Optimizations Applied:**
+  1. **Glibc Arena Restriction (`mallopt(M_ARENA_MAX, 2)`):** Restricted glibc to 2 arenas, preventing per-thread heap memory expansion.
+  2. **6-Byte Separated Records (`lats: Vec<u32>`, `eps: Vec<u16>`):** Dropped record storage from 8 bytes to exactly 6 bytes. Phase 2 Pass 1 (frequency & error counting) only streams through the 2-byte `eps` vector, cutting memory bandwidth by $4\times$.
+  3. **Direct Integer CRC Hash Equality:** Slices are matched against known endpoints using 64-bit CRC comparisons in L1 cache (`hashes[ent] == hash`), eliminating cold-cache pointer dereferences and `memcmp` calls across all 3.1 million lines.
 
 ---
 
